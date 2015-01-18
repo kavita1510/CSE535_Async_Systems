@@ -1,0 +1,11 @@
+{
+    "server" : {
+        "serverId" : 13,
+        "startupDelay" : 10,
+        "serverLifeTime" : {"UNBOUND" : 1},
+        "type" : 2,
+        "extendChain" : 1,
+        "bankId" : 100,
+        "fail" : 0
+    }
+}

@@ -1,0 +1,876 @@
+import sys
+import json
+import pickle
+import re
+import itertools
+import heapq
+import time
+
+FLAGS = re.VERBOSE | re.MULTILINE | re.DOTALL
+WHITESPACE = re.compile(r'[ \t\n\r]*', FLAGS)
+
+# JSON decoder class for reading and parsing json objects from file
+class ConcatJSONDecoder(json.JSONDecoder):
+    def decode(self, s, _w=WHITESPACE.match):
+        s_len = len(s)
+        objs = []
+        end = 0
+        while end != s_len:
+            obj, end = self.raw_decode(s, idx=_w(s, end).end())
+            end = _w(s, end).end()
+            objs.append(obj)
+        return objs
+
+# Server class for handling requests from client
+class Server(process):
+    # setup the server process
+    def setup(clients, master, serverProcessMap, config, pred, succ):
+        self.serverId = config['serverId']
+        self.serverLifeTime = config['serverLifeTime']
+        self.accDetails = {}
+        self.history = {}
+        self.sentReq = []
+        self.clientProcessList = list(clients)
+        self.totalSentCnt = 0
+        self.totalRecvCnt = 0
+        self.lastSeqNum = 0
+
+    # main function
+    # a place holder to keep the server alive
+    def main():
+        if config['extendChain'] == 1:
+            output("ServerId: " + str(serverId) + " waiting for startup delay")
+            if await(False): pass
+            elif timeout(config['startupDelay']): pass
+            output("ServerId: " + str(serverId) + " contacting Master")
+            send(('ExtendChain', config), to=master)
+
+        output("ServerId: " + str(serverId) + " starting the server operations")
+        heartBeatMsg = {}
+        heartBeatMsg['serverId'] = serverId
+        heartBeatMsg['bankId'] = config['bankId']
+        heartBeatMsg['type'] = config['type']
+        
+        while True:                 # send heart beat msg to master every 2 secs
+            if(await(False)): pass
+            elif timeout(4):
+                sendHeartBeatMsg(heartBeatMsg)
+    
+    # Check if the server life time is exceeded
+    # if not then send heart beat signal to the master
+    def sendHeartBeatMsg(msg):
+        # check the server life time
+        if 'UNBOUND' not in serverLifeTime:
+            if 'RecvNum' in serverLifeTime.keys() and serverLifeTime['RecvNum'] == totalRecvCnt:
+                output("ServerId: " + str(serverId) + " RECV request limit reached. Terminating server")
+                sys.exit()
+            elif 'SentNum' in serverLifeTime.keys() and serverLifeTime['SentNum'] == totalSentCnt:
+                output("ServerId: " + str(serverId) + " SEND request limit reached. Terminating server")
+                sys.exit()
+        output("ServerId: " + str(serverId) + " sending heart beat to master")
+        send(('HeartBeat', msg), to=master)
+
+    # callback to handle the extend chain msg
+    def receive(msg=('ExtendChain', req), from_=p):
+        output("ServerId: " + str(serverId) + " Received extend chain msg")
+        if req['extendChain'] == 3:
+            output("ServerId: " + str(serverId) + " Received the sync data from the predecessor")
+            accDetails = req['accDetails']
+            history = req['history']
+            sentReq = req['sentReq']
+            output("ServerId: " + str(serverId) + " sync done successfully. Send ACK to Master")
+            res = {}
+            res['ack'] = 1
+            res['serverId'] = serverId
+            res['bankId'] = config['bankId']
+            send(('AckChainExtSync', res), to=master)
+        elif req['type'] == 2:                            # its the new tail
+            config['type'] = 2
+            pred = req['predecessor']
+            output("ServerId: " + str(serverId) + " Updated the predecessor at the new tail")
+            res = {}
+            res['ack'] = 1
+            res['serverId'] = serverId
+            res['bankId'] = config['bankId']
+            if config['fail'] == 1:
+                output("ServerId: " + str(serverId) + " Simulating server failure while chain extension")
+                sys.exit()
+            send(('AckNewTail', res), to=p)         # p should be master in this case
+            output("ServerId: " + str(serverId) + " Sent ack to Master")
+        elif req['type'] == 1:                # its the old tail
+            output("ServerId: " + str(serverId) + " handling the chain extension and updating the successor")
+            config['type'] = 1
+            succ = req['successor']
+            # send the sync data to the new tail
+            data = {}
+            data['accDetails'] = accDetails
+            data['history'] = history
+            data['sentReq'] = sentReq
+            data['extendChain'] = 3
+            if config['fail'] == 1:
+                output("ServerId: " + str(serverId) + " Simulating server failure while chain extension")
+                sys.exit()
+            send(('ExtendChain', data), to=serverProcessMap[succ])
+            output("ServerId: " + str(serverId) + " sent the sync data to successor " + str(succ))
+            res = {}
+            res['ack'] = 1
+            res['serverId'] = serverId
+            res['bankId'] = config['bankId']
+            send(('AckOldTail', res), to=master)
+            output("ServerId: " + str(serverId) + " sent the ack to Master")
+
+    # callback function to handle the query requests from the client
+    # must be the tail server ih the chain
+    def receive(msg=('Query', req), from_=p):
+        output("ServerId: " + str(serverId) + " Received Query request: " + str(req['reqId']) + " from client: " + str(req['clientId']))
+        output("ServerId: " + str(serverId) + " " + json.dumps(req))
+        num = req['accNum']
+        reqId = req['reqId']
+        res = {}
+        flag = True
+        
+        totalRecvCnt += 1       # increment total recv cnt
+        # output(json.dumps(history)) 
+        if reqId in history:
+            flag = False
+            hist = history[reqId]
+            if hist['payload']['accNum'] == num:
+                res = hist['response']
+                output("ServerId: " + str(serverId) + " Query request already exists in history: " + json.dumps(res))
+            else:
+                res['reqId'] = reqId
+                res['outcome'] = 'InconsistentWithHistory'
+                res['accNum'] = num
+                res['currBal'] = 0
+                output("ServerId: " + str(serverId) + " Query request already inconsistent with history: " + json.dumps(res))
+        else:
+            res['reqId'] = reqId
+            res['outcome'] = 'Processed'
+            res['accNum'] = num
+            if num in accDetails:
+                res['currBal'] = accDetails[num]
+            else:
+                output("ServerId: " + str(serverId) + " Account does not exists. Creating new account")
+                # don't create the account on tail, if one doesn't exist
+                # accDetails[num] = 0
+                res['currBal'] = 0
+        
+        if flag:
+            hist = {}
+            hist['payload'] = req
+            hist['response'] = res
+            history[reqId] = hist
+          
+        if(req['simFail'] == 2):
+            output("ServerId: " + str(serverId) + " Simulating msg drop from server-client.")
+            return
+        send(('Response',res), to=p)        # send the response back to the client
+        totalSentCnt += 1   # increment total sent cnt
+
+    # callback function to handle the update requests from the clients
+    # must be the head server in the chain
+    def receive(msg=('Update', req), from_=p):
+        output("ServerId: " + str(serverId) + " Received Update request: " + str(req['reqId']) + " from client: " + str(req['clientId']))
+        output("ServerId: " + str(serverId) + " " + json.dumps(req))
+        num = req['accNum']
+        amt = req['amount']
+        oper = req['operation']
+        reqId = req['reqId']
+        res = {}
+        flag = True
+        
+        totalRecvCnt += 1   # increment total recv cnt
+        if reqId in history:
+            flag = False
+            hist = history[reqId]
+            if hist['payload']['accNum'] == num and hist['payload']['operation'] == oper and hist['payload']['amount'] == amt:
+            #if hist['payload']['accNum'] == num:
+                res = hist['response']
+                output("ServerId: " + str(serverId) + " Update request already exists in history: " + json.dumps(res))
+            else:
+                res['reqId'] = reqId
+                res['outcome'] = 'InconsistentWithHistory'
+                res['accNum'] = num
+                res['currBal'] = 0
+                output("ServerId: " + str(serverId) + " Update request inconsistent with history: " + json.dumps(res))
+
+            # this is the case for req already existing in history, it should send the already processed response
+            send(('Response', res), to=p)    # send the response back to client
+            totalSentCnt += 1   # increment total sent cnt
+        else:
+            res['reqId'] = reqId
+            res['accNum'] = num
+            if num in accDetails:
+                bal = accDetails[num]
+                if req['operation'] == 1:
+                    accDetails[num] = bal + amt
+                    output("ServerId: " + str(serverId) + " Updating the bal: " + str(bal))
+                    res['outcome'] = 'Processed'
+                elif req['operation'] == 2:
+                    if(bal < amt):
+                        output("ServerId: " + str(serverId) + " Not sufficient balance")
+                        res['outcome'] = 'InSufficientFunds'
+                    else:
+                        accDetails[num] = bal - amt
+                        res['outcome'] = 'Processed'
+            else:
+                output("ServerId: " + str(serverId) + " Account does not exists. Creating new account")
+                if req['operation'] == 1:
+                    accDetails[num] =  amt
+                    res['outcome'] = 'Processed'
+                else:
+                    accDetails[num] =  0
+                    res['outcome'] = 'InSufficientFunds'
+            res['currBal'] = accDetails[num]
+            res['payload'] = req
+        
+        if flag:
+            hist = {}
+            hist['payload'] = req
+            hist['response'] = res 
+            history[reqId] = hist            # add request to the history object
+            sentReq.append(res)     # add the response to the sent list. Will be used in server failure
+            # output("server-process map: " + str(serverProcessMap.keys()))
+            send(('Sync', res), to=serverProcessMap[succ])    # send Sync request
+            totalSentCnt += 1   # increment total sent cnt
+
+    # callback function to handle the Sync request from successor
+    def receive(msg=('Sync', req), from_=p):
+        output("ServerId: " + str(serverId) + " Received Sync request: " + str(req['reqId']))
+        output("ServerId: " + str(serverId) + " " + json.dumps(req))
+        if config['fail'] == 1:
+            if 'fail' in req.keys() and req['fail'] == 1:
+                output("ServerId: " + str(serverId) + " Simulating server failure while recovery")
+                sys.exit()
+        num = req['payload']['accNum']
+        reqId = req['reqId']
+        clientId = req['payload']['clientId']
+        accDetails[num] = req['currBal']
+        history[reqId] = { 'payload' : req['payload'], 'response' : req }
+        sentReq.append(req)     # add the response to the sent list. Will be used in server failure
+        totalRecvCnt += 1   # increment total recv cnt
+        
+        if config['type'] == 2:
+            client = clientProcessList[clientId]
+            if req['payload']['simFail'] == 2:
+                output("ServerId: " + str(serverId) + " Simulating msg drop from server-client.")
+            else:
+                res = req
+                del res['payload']
+                send(('Response', res), to=client)          # send reponse back to client 
+            send(('Ack', reqId, serverId), to=serverProcessMap[pred]) # send ack back to the predecessor
+        else:
+            output("ServerId: " + str(serverId) + " Sending sync req to succ: " + str(succ)) 
+            send(('Sync', req), to=serverProcessMap[succ])         # send Sync request to the successor
+        totalSentCnt += 1                                           # increment total sent cnt
+    
+    # callback method to handle the Ack request from the predecessor
+    # will delete the requests smaller than the received "reqId" from sent list
+    def receive(msg=('Ack', reqId, serverId), from_=p):
+        output("ServerId: " + str(serverId) + " Received Ack request: " + str(reqId))
+        # output("ServerId: " + str(serverId) + " " + str(reqId))
+        # nums = reqId.split(".")
+        # for i in range(0, int(nums[1])):
+        #    key = nums[0] + '.' + str(i)
+        #    if key in sentReq:
+        #        del sentReq[key] 
+        for item in sentReq:
+            if item['reqId'] == reqId:
+                del item
+    
+    # callback handler for check log
+    def receive(msg=('CheckLog', req), from_=p):
+        reqId = req['reqId']
+        res = {}
+        output("ServerId: " + str(serverId) + " Processing check log for req: " + req['reqId'])
+        if reqId in history.keys():
+            res = history[reqId]['response']
+            res['checkLog'] = 1
+        else:
+            res['checkLog'] = 0
+            res['reqId'] = reqId
+        output("ServerId: " + str(serverId) + " Processed check log for req: " + req['reqId'])
+        send(('CheckLog', res), to=p)
+    
+    # callback function to handle the server failure request from master 
+    # update the type if its head/tail server
+    # update the succ/pred server in case of internal failure
+    def receive(msg=('Failure', payload), from_=p):
+        output("ServerId: " + str(serverId) + " handling the server failure")
+        server = payload['failure']['server']
+        type = payload['failure']['type']
+        if type == "head":
+            config['type'] = 0
+            output("ServerId: " + str(serverId) + " updated the server type to HEAD")
+        elif type == "tail":
+            config['type'] = 2
+            output("ServerId: " + str(serverId) + " updated the server type to TAIL")
+        elif type == "successor":
+            succ = server
+            output("ServerId: " + str(serverId) + " updated the successor server")
+            handleNewSucc(payload['failure']['seqNum'])
+        elif type == "predecessor":
+            pred = server
+            res = { "seqNum" : lastSeqNum }
+            send(('Failure', res), to=p)
+           
+    # handle internal server failure and resolve
+    # sentReq anomalies by synchronizing the sentReq
+    def handleNewSucc(seqNum):
+        i = 0
+        flag = False
+        for item in sentReq: 
+            i += 1
+            if item['reqId'] == seqNum:
+                flag = True
+                break
+        if flag == True:
+            for j in range(i, len(sentReq)):
+                sentReq[j]['fail'] = 1
+                send(('Sync', sentReq[j]), to=serverProcessMap[succ])
+                if config['fail'] == 1:
+                    output("ServerId: " + str(serverId) + " Simulating server failure while recovery")
+                    sys.exit()
+        else:
+            for j in range(0, len(sentReq)):
+                sentReq[j]['fail'] = 1
+                send(('Sync', sentReq[j]), to=serverProcessMap[succ])
+                if config['fail'] == 1:
+                    output("ServerId: " + str(serverId) + " Simulating server failure while recovery")
+                    sys.exit()
+
+        
+# Client class for performing operations on server
+class Client(process):
+    # setup function for the client process
+    def setup(serverProcessMap, config, data):
+        self.clientId = config['clientId']
+        self.resendDelay = config['resendDelay']
+        self.numRetries = config['numRetries']
+        self.preReq = {}
+        self.responses = {}
+        self.currDelay = 0
+        self.currRetriesCnt = 0
+        self.retryLimit = True
+        self.checkLogFlag = -1
+        self.extendChainSleepFlag = -1
+        self.bankServerMap = {}
+
+    # will return the process corresponding to the 
+    # head/tail server of the given bank
+    def prepareServerMap(bankId):
+        if bankId in bankServerMap.keys():
+            return None
+        else:
+            for bank in config['banks']:
+                if bankId == bank['bankId']:
+                    bankServerMap[bankId] = {}
+                    bankServerMap[bankId]['tailServer'] = bank['tailServer']
+                    bankServerMap[bankId]['headServer'] = bank['headServer']
+        output("ClientId: " + str(clientId) + " " + json.dumps(bankServerMap))
+    
+    def findServer(opr, bankId):
+        if opr == 0 or opr == 4:
+            return bankServerMap[bankId]['tailServer']
+        else:
+            return bankServerMap[bankId]['headServer']
+
+    # main function to read the payload file and
+    # invoke requests to the server
+    def main():
+        output("ClientId: " + str(clientId) + " starting the client operations")
+        for d in data:
+            for item in d['data']:
+                if clientId == item['clientId']:
+                    for payload in item['payloads']:
+                        if await(False): pass
+                        elif timeout(1): pass
+
+                        # output("payload: " + json.dumps(payload['payload']))
+                        req = payload['payload']
+                        req['clientId'] = clientId
+                        reqId = req['reqId']
+                        type = ''
+                        prepareServerMap(req['bankId'])
+                        if req['operation'] == 0:
+                            type = 'Query'
+                        else:
+                            type = 'Update'
+                        clk = logical_clock()
+                        nums = reqId.split(".")
+                        if int(nums[1]) > 1:
+                            while retryLimit: 
+                                if await(preReq['reqId'] in responses): retryLimit = False
+                                elif timeout(int(resendDelay)): 
+                                    tryResending(preReq, type)
+                        
+                        retryLimit = True
+                        idx = findServer(req['operation'], req['bankId'])
+                        p = serverProcessMap[idx]                        
+                        output("ClientId: " + str(clientId) + " Sending request:" + str(req['reqId']) + " to server: " + str(idx))
+                        if(req['simFail'] == 1):
+                            output("ClientId: " + str(clientId) + " Simulating message failure between client-server")
+                        else:
+                            send((type, req), to=p) 
+                        preReq = req
+                        currDelay = int(time.time())
+                        currRetriesCnt = 1
+                    while retryLimit: 
+                        if await(preReq['reqId'] in responses): pass
+                        elif timeout(resendDelay): 
+                            tryResending(preReq, type)
+                    retryLimit = True
+        await(False)                                                            # will keep the client process alive
+
+    # callback function to recieve the reponse back from the server
+    # will append the response to the "responses" list
+    def receive(msg=('Response', res), from_=p):
+        output("ClientId: " + str(clientId) + " Received response from server for request: " + str(res['reqId']))
+        output("ClientId: " + str(clientId) + " Current Balance: " + str(res['currBal']))
+        responses[res['reqId']] = res           # add the received response to the responses object
+        # output("last received updated: " + lastRecv)
+        output("ClientId: " + str(clientId) + " Responses: " + json.dumps(responses))
+
+    # handle the msg resend logic
+    def tryResending(preReq, type):
+        if extendChainSleepFlag == 0:
+            output("ClientId: " + str(clientId) + " going to sleep for extend chain")
+            if await(extendChainSleepFlag == 1): pass
+            extendChainSleepFlag = -1
+            output("ClientId: " + str(clientId) + " awake after extend chain")
+
+        output("ClientId: " + str(clientId) + " Request timed out. " + str(preReq['reqId']))
+        currTime = int(time.time())
+        if currTime - currDelay > resendDelay:
+            if currRetriesCnt < numRetries:
+                output("ClientId: " + str(clientId) + " Checking with tail whether operation already performed: " + str(preReq['reqId']))
+                # Check to see if update opr has already been performed
+                data = {
+                    "checkLog" : 1,
+                    "reqId" : preReq['reqId']
+                    };  
+                idx = findServer(4, preReq['bankId'])
+                p = serverProcessMap[idx]
+                send(('CheckLog', preReq), to=p)
+                if await(checkLogFlag == -1): pass          # Wait to get the response from tail if the request has been performed
+                elif timeout(5): pass                       # break if nothing received till 5 secs
+                
+                if checkLogFlag == 0:
+                    output("ClientId: " + str(clientId) + " Request not performed at the tail: " + str(preReq['reqId']))
+                    output("ClientId: " + str(clientId) + " Performing request again: " + str(preReq['reqId']))
+                    checkLogFlag = -1
+                    idx = findServer(preReq['operation'], preReq['bankId'])
+                    p = serverProcessMap[idx]
+                    if(preReq['simFail'] == 1):
+                        output("ClientId: " + str(clientId) + " Simulating message failure between client-server")
+                    else:
+                        output("ClientId: " + str(clientId) + " Resending request: " + str(preReq['reqId']))
+                        send((type, preReq), to=p) 
+                    currDelay = int(time.time())
+                    currRetriesCnt += 1
+                elif checkLogFlag == 1:
+                    checkLogFlag = -1
+            else:
+                retryLimit = False
+                output("ClientId: " + str(clientId) + " Number of retries " + str(currRetriesCnt) + " exceeded the limit " + str(numRetries) + " Aborting request " + str(preReq['reqId']))
+        
+    # callback handler for check log
+    def receive(msg=('CheckLog', res), from_=p):
+        output("ClientId: " + str(clientId) + " Received check log response " + json.dumps(res))
+        checkLogFlag = res['checkLog']
+        if checkLogFlag == 1:
+            output("ClientId: " + str(clientId) + " Received response from server for request: " + str(res['reqId']))
+            output("ClientId: " + str(clientId) + " Current Balance: " + str(res['currBal']))
+            responses[res['reqId']] = res           # add the received response to the responses object
+            output("ClientId: " + str(clientId) + " Responses: " + json.dumps(responses))
+
+    # update the chain old in case of chain extension
+    # or sleep for the time period the chain is getting extended
+    def receive(msg=('ExtendChain', res), from_=p):
+        output("ClientId: " + str(clientId) + " received extend chain request: " + json.dumps(res))
+        if res['extendChain']['flag'] == 0:
+            extendChainSleepFlag = 0
+        elif res['extendChain']['flag'] == 1:
+            server = res['extendChain']['server']
+            extendChainSleepFlag = 1
+            bankId = res['extendChain']['bankId']
+            if bankId in bankServerMap.keys():
+                bankServerMap[bankId]['tailServer'] = server
+
+    # update the tail/head server for the respective banks in case of failure
+    def receive(msg=('Failure', res), from_=p):
+        output("ClientId: " + str(clientId) + " received failure request")
+        bankId = res['failure']['bankId']
+        server = res['failure']['server']
+        if res['failure']['type'] == 'tail':
+            if bankId in bankServerMap.keys():
+                bankServerMap[bankId]['tailServer'] = server
+        elif res['failure']['type'] == 'head':
+            if bankId in bankServerMap.keys():
+                bankServerMap[bankId]['headServer'] = server
+
+
+# Class for the master process to handle failure and chain extension
+class Master(process):
+    # setup function for the client process
+    def setup(bankClientMap, bankServerMap, heartBeatDelay, clients, serverProcessMap):
+        self.serverTimeStampMap = {}    # mapping of serverId to the entries in the heap
+        self.serverTimeStampHeap = []   # list of entries arranged in a heap based upon the timestamp
+        self.REMOVED = '<removed-task>'     # place holder for a removed task
+        self.counter = itertools.count()    # unique sequence count
+        self.clientList = list(clients)
+        self.succSeqNum = -1
+        self.newExtendChainServer = -1
+        self.newExtendChainBank = -1
+    
+    # main function to read the payload file and
+    # invoke requests to the server
+    def main():
+        output("Master: Master process started")
+        while True:                     # probe for server failure every second
+            if(await(False)): pass
+            elif timeout(1):
+                probeServerFailure()
+
+    # utility functions for heap/dict data structure for storing and retrieving the timestamp
+    # this function will add a new entry for the serverId if one doesn't exist, else will update the existing entry
+    def addTimeStamp(server, timestamp = 0):
+        serverId = server['serverId']
+        # output("ServerId: "  + str(serverId))
+        if serverId in serverTimeStampMap:
+            removeTimeStamp(server)
+        count = next(counter)
+        entry = [timestamp, count, server]
+        serverTimeStampMap[server['serverId']] = entry
+        heapq.heappush(serverTimeStampHeap, entry)
+
+    # will remove the existing entry from the dist
+    def removeTimeStamp(server):
+        entry = serverTimeStampMap.pop(server['serverId'])
+        entry[-1] = REMOVED
+
+    # will pop of the first entry from the heap
+    def popTimeStamp():
+        while serverTimeStampHeap:
+            timestamp, count, server = heapq.heappop(serverTimeStampHeap)
+            if server is not REMOVED:
+                del serverTimeStampMap[server['serverId']]
+                return [server, timestamp]
+            # raise KeyError('pop from an empty priority queue')  
+
+    # If a server entry is already there in the heap, just update the new timestamp
+    # else add a new entry for that server in the server timestamp list and heap
+    def receive(msg=('HeartBeat', server), from_=p):
+        output("Master: Received heart beat msg from server: " + str(server['serverId']))
+        addTimeStamp(server, int(time.time())) 
+   
+    # probe the heap data structure to check if any server has failed
+    def probeServerFailure():
+        serverObj = popTimeStamp()
+        if serverObj is None :
+            return
+        server = serverObj[0]
+        timestamp = serverObj[1]
+        if(int(time.time()) - timestamp > 5):
+            output("Master: ServerId: " + str(server['serverId']) + " failed")
+            handleServerFailure(server)
+        else:
+            addTimeStamp(server, timestamp)
+           
+    # handle server failure
+    # notify the respective servers
+    # notify the clients
+    def handleServerFailure(server):
+        serverId = server['serverId']
+        bankId = server['bankId']
+        type = server['type']
+        output("Master: handling the server failure for ServerId: " + str(serverId)) 
+        if type == 0:
+            newHead = updateChain(bankId, serverId, type)
+            output("Master: New head upated. ServerId: " + str(newHead))
+            payload = { 
+                "failure" : { 
+                    "type" : "head",
+                    "server" : newHead,
+                    "bankId" : bankId
+                } 
+            }
+            notifyClient(bankId, payload, "Failure")
+            send(('Failure', payload), to=serverProcessMap[newHead])
+        elif type == 1:
+            newSuccPred = updateChain(bankId, serverId, type)
+            output("Master: New relation: " + json.dumps(newSuccPred))
+            payload = {
+                "failure" : {
+                    "type" : "predecessor",
+                    "server" : newSuccPred[0]
+                }
+            }
+            send(('Failure', payload), to=serverProcessMap[newSuccPred[1]])
+            await(succSeqNum != -1)  # await till successor send seqNum
+            payload['failure']['type'] = "successor"
+            payload['failure']['server'] = newSuccPred[1]
+            payload['failure']['seqNum'] = succSeqNum
+            send(('Failure', payload), to=serverProcessMap[newSuccPred[0]])
+            if await(False): pass
+            elif timeout(3): pass
+            if succSeqNum == -1:
+                output("Master: The predecessor failed while recovery")
+                if(int(time.time()) - serverTimeStampMap[newSuccPred[0]][0] > 5):
+                    handleServerFailure(serverTimeStampMap[newSuccPred[0]][2])
+
+            succSeqNum = -1
+            # TODO: implement the logic for predecessor failure while recovery
+        elif type == 2:
+            newTail = updateChain(bankId, serverId, type)
+            output("Master: New Tail upated. ServerId: " + str(newTail))
+            payload = {
+                "failure" : { 
+                    "type" : "tail",
+                    "server" : newTail,
+                    "bankId" : bankId
+                } 
+            }
+            notifyClient(bankId, payload, "Failure")
+            send(('Failure', payload), to=serverProcessMap[newTail])
+            if newExtendChainServer != -1 and newExtendChainBank != -1:
+                output("Master: New server is still waiting to join the chain. server: " + str(newExtendChainServer) + " " + str(newExtendChainBank))
+                notifyOldTail(newExtendChainServer, newExtendChainBank)
+        else:
+            output("Master: Error unknown server type")
+        output("New Chain" + str(bankServerMap[bankId]))
+
+    # notify clients for the server failure
+    def notifyClient(bankId, payload, context):
+        output("Master: entering notify clients " + str(len(bankClientMap[bankId]))) 
+        for client in bankClientMap[bankId]:
+            output("Master: Notifying client of bankId: " + str(bankId) + " dest: " + str(client))
+            send((context, payload), to=clientList[client])
+
+    # update server chain
+    def updateChain(bankId, serverId, type):
+        output("Master: Updating the chain for the bank: " + str(bankId) + " server " + str(serverId))
+        if type == 0:
+            del bankServerMap[bankId][0]
+            return bankServerMap[bankId][0]
+        elif type == 1:
+            i = 0
+            output("Master: server map: " + str(bankServerMap[bankId]))
+            for server in bankServerMap[bankId]:
+                if serverId == server:
+                    output(str(bankServerMap[bankId][i]) + " " + str(i))
+                    del bankServerMap[bankId][i]
+                    return [bankServerMap[bankId][i-1], bankServerMap[bankId][i]]
+                i += 1
+        elif type == 2:
+            length = len(bankServerMap[bankId])
+            del bankServerMap[bankId][length - 1]
+            return bankServerMap[bankId][length - 2]
+        output("Master: Updated the chain for the bank: " + str(bankId)) 
+    
+    # callback to handle the response from the successor in case of internal failure
+    def receive(msg=('Failure', res), from_=p):
+        output("Master: received the seqNum from the successor")
+        succSeqNum = res['seqNum']
+    
+    # awake client processes
+    def awakeClient(bankId, tail):
+        data = {}
+        extendChain = {}
+        extendChain['type'] = 'tail'
+        extendChain['server'] = tail
+        extendChain['bankId'] = bankId
+        extendChain['flag'] = 1
+        data['extendChain'] = extendChain
+        notifyClient(bankId, data, "ExtendChain")
+        output("Master: awaking client process for bank: " + str(bankId))
+
+    def notifyOldTail(serverId, bankId):
+        data = {}
+        data['extendChain'] = 2
+        data['type'] = 1
+        data['successor'] = serverId
+        servers = bankServerMap[bankId]
+        oldTailServer = len(servers) - 1                 # extract the old tail
+        output("Master: Notifying the old tail of chain extension")
+        send(('ExtendChain', data), to=serverProcessMap[oldTailServer])
+        
+    # call back to handle the extend chain ack from servers
+    def receive(msg=('AckNewTail', req), from_=p):
+        output("Master: received ack from new tail: " + str(req['serverId']) + " " + str(req['bankId']))
+        bankId = req['bankId']
+        serverId = req['serverId']
+        output("Master: received the extend chain ack from: " + json.dumps(req))
+        output("Master: New tail activated successfully")
+        notifyOldTail(serverId, bankId)
+
+    # call back to handle the extend chain ack from servers
+    def receive(msg=('AckChainExtSync', req), from_=p):
+        output("Master: New tail synchronized successfully " + str(req['serverId']) + " " + str(req['bankId']))
+        bankServerMap[req['bankId']].append(req['serverId'])
+        awakeClient(req['bankId'], req['serverId'])
+        newExtendChainServer = -1
+        newExtendChainBank = -1
+       
+    # call back to handle the extend chain ack from servers
+    def receive(msg=('AckOldTail', req), from_=p):
+        output("Master: Received ack from the old tail. " + str(req['serverId']) + " " + str(req['bankId']))
+    
+    # call back to handle the extend chain requests
+    def receive(msg=('ExtendChain', req), from_=p):
+        output("Master: received extend chain request from: " + str(req['serverId']) + " " + str(req['bankId']))
+        bankId = req['bankId']
+        serverId = req['serverId'] 
+
+        newExtendChainServer = serverId
+        newExtendChainBank = bankId
+
+        servers = bankServerMap[bankId]
+        oldTail = len(servers) - 1                 # extract the old tail
+        
+        # activate the new tail server
+        data = {}
+        data['extendChain'] = 1 
+        data['type'] = 2
+        data['predecessor'] = oldTail
+        output("Master: notifying the new tail: " + str(serverId))
+        send(('ExtendChain', data), to=serverProcessMap[serverId])
+    
+
+# count number of client and server processes
+# using the config file
+def countProcesses(config):
+    count = {}
+    servers = 0
+    for c in config:
+        for bank in c['bank']:
+            servers += len(bank['servers'])
+        count['total_servers'] = servers
+        count['total_clients'] = len(c['client'])
+    print('Bootstraping: Calculating #  of processes: ' + json.dumps(count))
+    return count
+
+# main function for bootstraping the servers and clients
+def main():
+    config(clock='Lamport')
+
+    print('Bootstraping: loading and parsing the config file')
+    # load and parse the 'config' and 'payload' files in JSON format
+
+    #dataFile = open('/home/ppandey/async/cse535/chain_rep_distalgo/randomPayload.json')
+    #dataFile = open('/home/ppandey/async/cse535/chain_rep_distalgo/samePayload.json')
+    #dataFile = open('/home/ppandey/async/cse535/chain_rep_distalgo/payload.json')
+    #dataFile = open('/home/ppandey/async/cse535/chain_rep_distalgo/inconsistentHistoryPayload.json')
+    
+    dataFile = open('/home/ppandey/async/cse535/chain_rep_distalgo/payloadMsgDrop.json')
+    data = json.load(dataFile, cls=ConcatJSONDecoder)
+    
+    cfgFile = open('/home/ppandey/async/cse535/chain_rep_distalgo/config.json')
+    config = json.load(cfgFile, cls=ConcatJSONDecoder)
+    
+    extendCfgFile = open('/home/ppandey/async/cse535/chain_rep_distalgo/extendChain.json')
+    extendConfig = json.load(extendCfgFile, cls=ConcatJSONDecoder)
+    
+    # calculate the number of client and servers needed
+    count = countProcesses(config)
+    
+    # create the respective # of processes
+    servers = new(Server, num = count['total_servers'])
+    clients = new(Client, num = count['total_clients'])
+    
+    # create a master process
+    master = new(Master, num = 1)
+
+    # create a list of clients config objects
+    clientMap = []
+    for c in config:
+        for client in c['client']:
+            clientMap.append(client)
+
+    # create a list of server config objects
+    serverMap = []              # list of server configs
+    bankServerMap = {}  # list of bank vs servers
+    for c in config:
+        for bank in c['bank']:
+            serverList = []
+            for s in bank['servers']:
+                conf = {}
+                serverList.append(s['serverId'])
+                conf['bankId'] = bank['bankId']
+                conf['type'] = s['type']
+                conf['serverId'] = s['serverId']
+                conf['serverLifeTime'] = s['serverLifeTime']
+                conf['startupDelay'] = s['startupDelay']
+                conf['extendChain'] = s['extendChain']
+                conf['fail'] = s['fail']
+                serverMap.append(conf)
+            bankServerMap[bank['bankId']] = serverList
+
+    # create a list of bank vs clients
+    bankClientMap = {}
+    for c in config:
+        for bank in c['bank']:
+            clientList = []
+            for client in bank['clients']:
+                clientList.append(client['clientId'])
+            bankClientMap[bank['bankId']] = clientList
+    
+    heartBeatDelay = 0
+    for c in config:
+        m = c['master']
+        heartBeatDelay = m['heartBeatDelay']
+        # print(str(heartBeatDelay))
+
+    # setup servers/clients
+    print('Bootstraping: Setting up client/server processes')
+    serverProcessMap = {}       # mapping between the serverId and process
+    i = 0
+    serList = list(servers)
+
+    for process, config in zip(serList, serverMap):                 # prepare a server-process map
+        serverProcessMap[config['serverId']] = process
+
+    for config in extendConfig:                                 # prepare a server-process map
+        newServer = new(Server, num = 1)
+        serverProcessMap[config['server']['serverId']] = newServer
+    
+    for process, config in zip(serList, serverMap):
+        if config['type'] == 0:
+            setup({process}, (clients, master, serverProcessMap, config, None, i+1))
+        elif config['type'] == 2:
+            setup({process}, (clients, master, serverProcessMap, config, i-1, None))
+        else:
+            setup({process}, (clients, master, serverProcessMap, config, i-1, i+1))
+        i += 1
+
+    # setup the client processes
+    # the "clientId" of the client will be the index of the 
+    # client process in the "clients" list
+    cltList = list(clients)
+    for process, config in zip(cltList, clientMap):
+        setup({process}, (serverProcessMap, config, data))
+
+    # setup server for extend chain
+    extendChainList = []
+
+
+    for config in extendConfig:
+        # print(json.dumps(config['server']))
+        newServer = serverProcessMap[config['server']['serverId']]
+        setup(newServer, (clients, master, serverProcessMap, config['server'], None, None))
+        extendChainList.append(newServer)
+
+    # setup master process
+    setup(master, (bankClientMap, bankServerMap, heartBeatDelay, clients, serverProcessMap))
+    
+    # print("Server-Process: " + str(serverProcessMap.values()))
+     
+    print('Bootstraping: Starting client/server processes')
+    # Start the server and client processes
+    start(master)
+    start(servers)
+    start(clients)
+
+    print("Bootstraping: Starting the server for extending the chain")
+    for server in extendChainList:
+        start(server)

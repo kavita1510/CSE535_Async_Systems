@@ -1,0 +1,325 @@
+
+{
+    "master" : {
+	"heartBeatDelay" : 5000
+    },
+    "bank" : [
+    {
+        "bankId" : 100,
+        "bankName" : "HSBC",
+        "chainLength" : 4,
+        "numClient" : 6,
+        "headServer" : 0,
+        "tailServer" : 3,
+        "servers" : [
+            {
+                "serverId" : 0,
+                "startupDelay" : 0,
+                "serverLifeTime" : {"UNBOUND" : 1},
+                "type" : 0,
+                "extendChain" : 0
+            },
+            {
+                "serverId" : 1,
+                "startupDelay" : 0,
+                "serverLifeTime" : {"RecvNum" : 2},
+                "type" : 1,
+                "extendChain" : 0
+            },
+            {
+                "serverId" : 2,
+                "startupDelay" : 0,
+                "serverLifeTime" : {"UNBOUND" : 1},
+                "type" : 1,
+                "extendChain" : 0
+            },
+            {
+                "serverId" : 3,
+                "startupDelay" : 0,
+                "serverLifeTime" : {"UNBOUND" : 1},
+                "type" : 2,
+                "extendChain" : 0
+
+            } 
+        ],
+        "clients" : [
+            {   
+                "clientId" : 0
+            },
+            {
+                "clientId" : 1
+            },
+            {
+                "clientId" : 2
+            },
+            {
+                "clientId" : 3
+            }
+        ]
+    },
+    {
+        "bankId" : 200,
+        "bankName" : "CITI",
+        "chainLength" : 4,
+        "numClient" : 6,
+        "headServer" : 4,
+        "tailServer" : 7,
+        "servers" : [
+            {
+                "serverId" : 4,
+                "startupDelay" : 0,
+                "serverLifeTime" : "UNBOUND",
+                "type" : 0,
+                "extendChain" : 0
+            },
+            {
+                "serverId" : 5,
+                "startupDelay" : 0,
+                "serverLifeTime" : "UNBOUND",
+                "type" : 1,
+                "extendChain" : 0
+            },
+            {
+                "serverId" : 6,
+                "startupDelay" : 0,
+                "serverLifeTime" : "UNBOUND",
+                "type" : 1,
+                "extendChain" : 0
+            },
+            {
+                "serverId" : 7,
+                "startupDelay" : 0,
+                "serverLifeTime" : "UNBOUND",
+                "type" : 2,
+                "extendChain" : 0
+
+            } 
+        ],
+        "clients" : [
+            {   
+                "clientId" : 0
+            },
+            {
+                "clientId" : 1
+            },
+            {
+                "clientId" : 2
+            },
+            {
+                "clientId" : 3
+            }
+        ]
+    },
+    {
+        "bankId" : 300,
+        "bankName" : "BOA",
+        "chainLength" : 4,
+        "numClient" : 6,
+        "headServer" : 8,
+        "tailServer" : 11,
+        "servers" : [
+            {
+                "serverId" : 8,
+                "startupDelay" : 0,
+                "serverLifeTime" : "UNBOUND",
+                "type" : 0,
+                "extendChain" : 0
+
+            },
+            {
+                "serverId" : 9,
+                "startupDelay" : 0,
+                "serverLifeTime" : "UNBOUND",
+                "type" : 1,
+                "extendChain" : 0
+            },
+            {
+                "serverId" : 10,
+                "startupDelay" : 0,
+                "serverLifeTime" : "UNBOUND",
+                "type" : 1,
+                "extendChain" : 0
+            },
+            {
+                "serverId" : 11,
+                "startupDelay" : 0,
+                "serverLifeTime" : "UNBOUND",
+                "type" : 2,
+                "extendChain" : 0
+            } 
+        ],
+        "clients" : [
+            {   
+                "clientId" : 0
+            },
+            {
+                "clientId" : 1
+            },
+            {
+                "clientId" : 2
+            },
+            {
+                "clientId" : 3
+            }
+        ]
+    }
+    ],
+    "client" : [
+        {
+            "clientId" : 0,
+            "numRetries" : 3,
+            "resendDelay" : 3,
+            "resendFlag" : "true",
+            "banks" : [
+                {
+                    "bankId" : 100,
+                    "headServer" : 0,
+                    "tailServer" : 3,
+                    "accNum" : 1001000
+                },
+                {
+                    "bankId" : 200,
+                    "headServer" : 4,
+                    "tailServer" : 7,
+                    "accNum" : 2001000
+                },
+                {
+                    "bankId" : 300,
+                    "headServer" : 8,
+                    "tailServer" : 11,
+                    "accNum" : 3001000
+                }
+            ]
+        },
+        {
+            "clientId" : 1,
+            "numRetries" : 3,
+            "resendDelay" : 5,
+            "resendFlag" : "true",
+            "banks" : [
+                {
+                    "bankId" : 100,
+                    "headServer" : 0,
+                    "tailServer" : 3,
+                    "accNum" : 1001001
+                },
+                {
+                    "bankId" : 200,
+                    "headServer" : 4,
+                    "tailServer" : 7,
+                    "accNum" : 2001001
+                },
+                {
+                    "bankId" : 300,
+                    "headServer" : 8,
+                    "tailServer" : 11,
+                    "accNum" : 3001001
+                }
+            ]
+        },
+        {
+            "clientId" : 2,
+            "numRetries" : 3,
+            "resendDelay" : 5,
+            "resendFlag" : "true",
+            "banks" : [
+                {
+                    "bankId" : 100,
+                    "headServer" : 0,
+                    "tailServer" : 3,
+                    "accNum" : 1001002
+                },
+                {
+                    "bankId" : 200,
+                    "headServer" : 4,
+                    "tailServer" : 7,
+                    "accNum" : 2001002
+                },
+                {
+                    "bankId" : 300,
+                    "headServer" : 8,
+                    "tailServer" : 11,
+                    "accNum" : 3001002
+                }
+            ]
+        },
+        {
+            "clientId" : 3,
+            "numRetries" : 3,
+            "resendDelay" : 5,
+            "resendFlag" : "true",
+            "banks" : [
+                {
+                    "bankId" : 100,
+                    "headServer" : 0,
+                    "tailServer" : 3,
+                    "accNum" : 1001003
+                },
+                {
+                    "bankId" : 200,
+                    "headServer" : 4,
+                    "tailServer" : 7,
+                    "accNum" : 2001003
+                },
+                {
+                    "bankId" : 300,
+                    "headServer" : 8,
+                    "tailServer" : 11,
+                    "accNum" : 3001003
+                }
+            ]
+        },
+        {
+            "clientId" : 4,
+            "numRetries" : 3,
+            "resendDelay" : 5,
+            "resendFlag" : "true",
+            "banks" : [
+                {
+                    "bankId" : 100,
+                    "headServer" : 0,
+                    "tailServer" : 3,
+                    "accNum" : 1001004
+                },
+                {
+                    "bankId" : 200,
+                    "headServer" : 4,
+                    "tailServer" : 7,
+                    "accNum" : 2001004
+                },
+                {
+                    "bankId" : 300,
+                    "headServer" : 8,
+                    "tailServer" : 11,
+                    "accNum" : 3001004
+                }
+            ]
+        },
+        {
+            "clientId" : 5,
+            "numRetries" : 3,
+            "resendDelay" : 5,
+            "resendFlag" : "true",
+            "banks" : [
+                {
+                    "bankId" : 100,
+                    "headServer" : 0,
+                    "tailServer" : 3,
+                    "accNum" : 1001005
+                },
+                {
+                    "bankId" : 200,
+                    "headServer" : 4,
+                    "tailServer" : 7,
+                    "accNum" : 2001005
+                },
+                {
+                    "bankId" : 300,
+                    "headServer" : 8,
+                    "tailServer" : 11,
+                    "accNum" : 3001005
+                }
+            ]
+        }
+    ]
+}

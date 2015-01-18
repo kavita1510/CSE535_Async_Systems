@@ -1,0 +1,53 @@
+
+{
+    "master" : {
+        "hostname" : "localhost",
+        "port" : 8080,
+        "heartBeatDelay" : 5000
+    },
+    "server" : {
+	"bankId" : 100,
+	"serverId" : 106,
+        "hostname" : "localhost",
+        "port" : 8106,
+        "startupDelay" : 0,
+        "serverLifeTime" : {"UNBOUND" : 1},
+        "type" : 2,
+        "fail" : 1
+    },
+    "bank" : [
+        {
+            "bankId" : 100,
+            "headServer" : {
+                "hostname" : "localhost",
+                "port" : 8101
+            },
+            "tailServer" : {
+                "hostname" : "localhost",
+                "port" : 8105
+            }
+        },
+        {
+            "bankId" : 200,
+            "headServer" : {
+                "hostname" : "localhost",
+                "port" : 8201
+            },
+            "tailServer" : {
+                "hostname" : "localhost",
+                "port" : 8205
+            }
+        },
+        {
+            "bankId" : 300,
+            "headServer" : {
+                "hostname" : "localhost",
+                "port" : 8301
+            },
+            "tailServer" : {
+                "hostname" : "localhost",
+                "port" : 8305
+            }
+        }
+    ]
+}
